@@ -6,6 +6,43 @@ import uuid
 import qrcode
 from datetime import datetime
 
+# --- FUNCIONES DE AYUDA (RUT CHILENO) ---
+def calcular_dv(rut_cuerpo):
+    """Calcula el dígito verificador usando Módulo 11"""
+    secuencia = [2, 3, 4, 5, 6, 7]
+    acumulado = 0
+    multiplicador = 0
+    
+    # Invertimos el rut para recorrerlo de derecha a izquierda
+    for d in str(rut_cuerpo)[::-1]:
+        acumulado += int(d) * secuencia[multiplicador % 6]
+        multiplicador += 1
+    
+    resto = acumulado % 11
+    resultado = 11 - resto
+    
+    if resultado == 11: return '0'
+    if resultado == 10: return 'K'
+    return str(resultado)
+
+def formatear_rut(rut_raw):
+    """Recibe '12345678' y devuelve '12.345.678-5'"""
+    if not rut_raw: return ""
+    # Limpiamos puntos y guiones por si acaso el usuario los puso igual
+    limpio = str(rut_raw).replace(".", "").replace("-", "").upper()
+    
+    # Si el usuario puso el DV, lo separamos, si no, lo calculamos
+    # Pero su solicitud fue explícita: calcular el DV. 
+    # Asumiremos que ingresa SOLO el cuerpo numérico.
+    try:
+        cuerpo = int(limpio)
+        dv = calcular_dv(cuerpo)
+        # Formato con puntos (truco de locale o f-string)
+        cuerpo_fmt = "{:,}".format(cuerpo).replace(",", ".")
+        return f"{cuerpo_fmt}-{dv}"
+    except ValueError:
+        return rut_raw # Si falla (ej: letras), devolvemos lo que escribió
+
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
     page_title="Mawida EtoVet",
@@ -31,20 +68,20 @@ def generar_qr(url_verificacion):
     img.save("qr_temp.png")
 
 def generar_pdf(datos):
+    # NOTA: Asegúrese de que el nombre del archivo en GitHub sea MINÚSCULAS
     template = latex_jinja_env.get_template('receta_template.tex')
     with open('receta.tex', 'w') as f:
         f.write(template.render(datos))
     
-    # Ejecutamos XeLaTeX
     subprocess.run(['xelatex', '-interaction=nonstopmode', 'receta.tex'], check=True)
     return 'receta.pdf'
 
 # --- INTERFAZ BARRA LATERAL ---
 with st.sidebar:
     st.header("👨‍⚕️ Médico Tratante")
-    # Campos vacíos por defecto
-    medico_nombre = st.text_input("Nombre Médico")
-    medico_rut = st.text_input("RUT Médico")
+    medico_nombre = st.text_input("Nombre Médico", placeholder="Ej: Juan Pérez")
+    # RUT solo números
+    medico_rut_raw = st.text_input("RUT Médico (Solo números)", placeholder="Ej: 12345678")
     
     st.divider()
     if st.button("🔄 Nueva Receta (Limpiar)", type="secondary"):
@@ -53,7 +90,7 @@ with st.sidebar:
 
 # --- CUERPO PRINCIPAL ---
 if not os.path.exists("logo.png"):
-    st.warning("⚠️ Falta el archivo 'logo.png'.")
+    st.warning("⚠️ Falta 'logo.png'.")
 else:
     st.image("logo.png", width=120)
 
@@ -62,14 +99,15 @@ st.title("Recetario Digital Mawida")
 # 1. Datos del Paciente
 st.subheader("1. Identificación del Paciente")
 c1, c2, c3 = st.columns(3)
-# Quitamos los valores por defecto (ej: "Luna")
-paciente = c1.text_input("Nombre Paciente") 
-especie = c2.selectbox("Especie", ["Canino", "Felino", "Exótico", "Equino"])
-peso = c3.text_input("Peso (kg)")
+paciente = c1.text_input("Nombre Paciente", placeholder="Ej: Luna")
+especie = c2.selectbox("Especie", 
+                       ["Canino", "Felino", "Exótico", "Equino", "Bovino", "Ovino", "Caprino"])
+peso = c3.text_input("Peso", placeholder="Ej: 25 kg")
 
 c4, c5 = st.columns(2)
-tutor = c4.text_input("Nombre Tutor")
-rut_tutor = c5.text_input("RUT Tutor")
+tutor = c4.text_input("Nombre Tutor", placeholder="Ej: Ana González")
+# RUT Tutor solo números
+rut_tutor_raw = c5.text_input("RUT Tutor (Solo números)", placeholder="Ej: 13904156")
 
 # 2. Medicamentos
 st.divider()
@@ -80,10 +118,11 @@ if 'lista_meds' not in st.session_state:
 
 with st.form("form_medicamentos", clear_on_submit=True):
     col_a, col_b = st.columns([1, 1])
-    f_nombre = col_a.text_input("Fármaco / Principio Activo")
-    f_dosis = col_b.text_input("Dosis")
-    f_frec = col_a.text_input("Frecuencia")
-    f_notas = col_b.text_input("Indicaciones")
+    # Placeholders para ejemplos, no valores predeterminados
+    f_nombre = col_a.text_input("Fármaco", placeholder="Ej: Fluoxetina 20mg")
+    f_dosis = col_b.text_input("Dosis", placeholder="Ej: 1 comprimido")
+    f_frec = col_a.text_input("Frecuencia", placeholder="Ej: c/24 hrs por 5 días")
+    f_notas = col_b.text_input("Indicaciones", placeholder="Ej: Dar con comida")
     
     if st.form_submit_button("➕ Agregar Medicamento"):
         if f_nombre:
@@ -96,7 +135,6 @@ with st.form("form_medicamentos", clear_on_submit=True):
         else:
             st.warning("Debe escribir el nombre del fármaco")
 
-# Tabla de revisión
 if len(st.session_state.lista_meds) > 0:
     st.table(st.session_state.lista_meds)
     if st.button("🗑️ Borrar Todo"):
@@ -107,7 +145,6 @@ st.divider()
 
 # 3. Emisión
 if st.button("🖨️ EMITIR DOCUMENTO OFICIAL", type="primary", use_container_width=True):
-    # Validaciones básicas antes de imprimir
     errores = []
     if not medico_nombre: errores.append("Falta el nombre del médico")
     if not paciente: errores.append("Falta el nombre del paciente")
@@ -117,25 +154,27 @@ if st.button("🖨️ EMITIR DOCUMENTO OFICIAL", type="primary", use_container_w
         for e in errores:
             st.error(f"⚠️ {e}")
     else:
-        # Generación
+        # PROCESAR RUTS (Calcular DV y formatear)
+        rut_medico_fmt = formatear_rut(medico_rut_raw)
+        rut_tutor_fmt = formatear_rut(rut_tutor_raw)
+        
         id_unico = str(uuid.uuid4())[:8].upper()
         fecha_hora = datetime.now()
         
         # URL Temporal
         url_validacion = f"https://mawida-etovet.streamlit.app/verificar?id={id_unico}"
-        
         generar_qr(url_validacion)
         
         datos_pdf = {
             "medico_nombre": medico_nombre,
-            "medico_rut": medico_rut,
+            "medico_rut": rut_medico_fmt, # Se envía el RUT ya formateado con DV
             "fecha_actual": fecha_hora.strftime("%d/%m/%Y"),
             "hora_actual": fecha_hora.strftime("%H:%M"),
             "paciente_nombre": paciente,
             "paciente_especie": especie,
             "paciente_peso": peso,
             "tutor_nombre": tutor,
-            "tutor_rut": rut_tutor,
+            "tutor_rut": rut_tutor_fmt,   # Se envía el RUT ya formateado con DV
             "items": st.session_state.lista_meds,
             "id_unico": id_unico,
             "url_qr": url_validacion
