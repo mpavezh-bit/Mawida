@@ -28,20 +28,16 @@ def calcular_dv(rut_cuerpo):
 def formatear_rut(rut_raw):
     """Recibe '12345678' y devuelve '12.345.678-5'"""
     if not rut_raw: return ""
-    # Limpiamos puntos y guiones por si acaso el usuario los puso igual
     limpio = str(rut_raw).replace(".", "").replace("-", "").upper()
     
-    # Si el usuario puso el DV, lo separamos, si no, lo calculamos
-    # Pero su solicitud fue explícita: calcular el DV. 
-    # Asumiremos que ingresa SOLO el cuerpo numérico.
     try:
         cuerpo = int(limpio)
         dv = calcular_dv(cuerpo)
-        # Formato con puntos (truco de locale o f-string)
+        # Formato con puntos
         cuerpo_fmt = "{:,}".format(cuerpo).replace(",", ".")
         return f"{cuerpo_fmt}-{dv}"
     except ValueError:
-        return rut_raw # Si falla (ej: letras), devolvemos lo que escribió
+        return rut_raw 
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -68,20 +64,30 @@ def generar_qr(url_verificacion):
     img.save("qr_temp.png")
 
 def generar_pdf(datos):
-    # NOTA: Asegúrese de que el nombre del archivo en GitHub sea MINÚSCULAS
     template = latex_jinja_env.get_template('receta_template.tex')
     with open('receta.tex', 'w') as f:
         f.write(template.render(datos))
     
-    subprocess.run(['xelatex', '-interaction=nonstopmode', 'receta.tex'], check=True)
+    # Ejecutamos XeLaTeX
+    result = subprocess.run(
+        ['xelatex', '-interaction=nonstopmode', 'receta.tex'], 
+        capture_output=True, 
+        text=True
+    )
+    
+    if result.returncode != 0:
+        st.error("❌ Error de compilación LaTeX:")
+        st.code(result.stdout[-800:]) # Muestra el error si falla
+        raise Exception("Error al generar PDF")
+        
     return 'receta.pdf'
 
 # --- INTERFAZ BARRA LATERAL ---
 with st.sidebar:
     st.header("👨‍⚕️ Médico Tratante")
     medico_nombre = st.text_input("Nombre Médico", placeholder="Ej: Juan Pérez")
-    # RUT solo números
-    medico_rut_raw = st.text_input("RUT Médico (Solo números)", placeholder="Ej: 12345678")
+    # CORRECCIÓN 1: Etiqueta precisa
+    medico_rut_raw = st.text_input("RUT Médico (sin puntos ni dígito verificador)", placeholder="Ej: 12345678")
     
     st.divider()
     if st.button("🔄 Nueva Receta (Limpiar)", type="secondary"):
@@ -100,14 +106,17 @@ st.title("Recetario Digital Mawida")
 st.subheader("1. Identificación del Paciente")
 c1, c2, c3 = st.columns(3)
 paciente = c1.text_input("Nombre Paciente", placeholder="Ej: Luna")
-especie = c2.selectbox("Especie", 
-                       ["Canino", "Felino", "Exótico", "Equino", "Bovino", "Ovino", "Caprino"])
+
+# CORRECCIÓN 2: Lista Alfabética
+lista_especies = sorted(["Canino", "Felino", "Exótico", "Equino", "Bovino", "Ovino", "Caprino"])
+especie = c2.selectbox("Especie", lista_especies)
+
 peso = c3.text_input("Peso", placeholder="Ej: 25 kg")
 
 c4, c5 = st.columns(2)
 tutor = c4.text_input("Nombre Tutor", placeholder="Ej: Ana González")
-# RUT Tutor solo números
-rut_tutor_raw = c5.text_input("RUT Tutor (Solo números)", placeholder="Ej: 13904156")
+# CORRECCIÓN 1: Etiqueta precisa
+rut_tutor_raw = c5.text_input("RUT Tutor (sin puntos ni dígito verificador)", placeholder="Ej: 13904156")
 
 # 2. Medicamentos
 st.divider()
@@ -118,7 +127,6 @@ if 'lista_meds' not in st.session_state:
 
 with st.form("form_medicamentos", clear_on_submit=True):
     col_a, col_b = st.columns([1, 1])
-    # Placeholders para ejemplos, no valores predeterminados
     f_nombre = col_a.text_input("Fármaco", placeholder="Ej: Fluoxetina 20mg")
     f_dosis = col_b.text_input("Dosis", placeholder="Ej: 1 comprimido")
     f_frec = col_a.text_input("Frecuencia", placeholder="Ej: c/24 hrs por 5 días")
@@ -154,7 +162,7 @@ if st.button("🖨️ EMITIR DOCUMENTO OFICIAL", type="primary", use_container_w
         for e in errores:
             st.error(f"⚠️ {e}")
     else:
-        # PROCESAR RUTS (Calcular DV y formatear)
+        # Calcular DVs y formatear
         rut_medico_fmt = formatear_rut(medico_rut_raw)
         rut_tutor_fmt = formatear_rut(rut_tutor_raw)
         
@@ -167,14 +175,14 @@ if st.button("🖨️ EMITIR DOCUMENTO OFICIAL", type="primary", use_container_w
         
         datos_pdf = {
             "medico_nombre": medico_nombre,
-            "medico_rut": rut_medico_fmt, # Se envía el RUT ya formateado con DV
+            "medico_rut": rut_medico_fmt,
             "fecha_actual": fecha_hora.strftime("%d/%m/%Y"),
             "hora_actual": fecha_hora.strftime("%H:%M"),
             "paciente_nombre": paciente,
             "paciente_especie": especie,
             "paciente_peso": peso,
             "tutor_nombre": tutor,
-            "tutor_rut": rut_tutor_fmt,   # Se envía el RUT ya formateado con DV
+            "tutor_rut": rut_tutor_fmt,
             "items": st.session_state.lista_meds,
             "id_unico": id_unico,
             "url_qr": url_validacion
@@ -196,4 +204,5 @@ if st.button("🖨️ EMITIR DOCUMENTO OFICIAL", type="primary", use_container_w
             c_exito2.image("qr_temp.png", caption="QR Verificación", width=100)
             
         except Exception as e:
-            st.error(f"Error técnico: {e}")
+            # El error detallado ya se muestra en generar_pdf
+            pass
