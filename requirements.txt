@@ -1,0 +1,4 @@
+streamlit
+jinja2
+qrcode[pil]
+# supabase  <-- (Lo activaremos en la siguiente fase para el almacenamiento)

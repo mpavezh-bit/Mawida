@@ -1,0 +1,6 @@
+texlive-xetex
+texlive-latex-recommended
+texlive-fonts-recommended
+texlive-plain-generic
+texlive-pictures
+ghostscript
